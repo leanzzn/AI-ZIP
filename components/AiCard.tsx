@@ -1,43 +1,36 @@
-type AiCardProps = {
-  name: string;
-  summary: string;
-  isFree?: boolean;
-  isKorean?: boolean;
-};
+import Link from "next/link";
+import type { Service } from "@/lib/services";
 
-export default function AiCard({ name, summary, isFree, isKorean }: AiCardProps) {
+export default function AiCard({ id, name, summary, priceType, isKorean }: Service) {
   return (
-    <div className="flex items-center gap-4 border-b border-border px-2 py-4">
-      <div className="h-10 w-10 shrink-0 rounded-full bg-border" />
+    <Link
+      href={`/service/${id}`}
+      className="flex items-center gap-4 rounded-xl border border-border px-4 py-4 transition-colors hover:border-muted"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-border text-lg font-bold">
+        {name.charAt(0)}
+      </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold">{name}</span>
-          {isFree && (
-            <span className="rounded-full bg-border px-2 py-0.5 text-xs text-muted">
-              무료
-            </span>
-          )}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-bold">{name}</span>
+          <span className="rounded-full bg-border px-2 py-0.5 text-xs text-muted">
+            {priceType}
+          </span>
           {isKorean && (
-            <span className="rounded-full bg-border px-2 py-0.5 text-xs text-muted">
-              한국어 지원
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+              한국어
             </span>
           )}
         </div>
         <p className="truncate text-sm text-muted">{summary}</p>
       </div>
       <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
         className="shrink-0 text-muted"
       >
         <path d="M7 17L17 7M7 7h10v10" />
       </svg>
-    </div>
+    </Link>
   );
 }

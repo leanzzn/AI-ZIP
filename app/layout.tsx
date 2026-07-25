@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Header from "@/components/Header";
-import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
   title: "AI.ZIP",
@@ -24,10 +23,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen antialiased">
         <Header />
-        <div className="flex">
-          <Sidebar />
-          <main className="flex-1">{children}</main>
-        </div>
+        <main className="mx-auto max-w-4xl">{children}</main>
       </body>
     </html>
   );
