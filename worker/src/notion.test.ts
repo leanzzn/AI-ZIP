@@ -10,6 +10,9 @@ test("속성 구조가 노션 규격과 맞는다", () => {
     description: "AI 어시스턴트",
     source: "ProductHunt",
     createdAt: "2026-07-30T00:00:00.000Z",
+    category: "문서 및 글쓰기",
+    priceType: "부분 무료",
+    isKorean: true,
   });
 
   assert.deepEqual(page.parent, { database_id: "db-1" });
@@ -19,7 +22,18 @@ test("속성 구조가 노션 규격과 맞는다", () => {
     Description: { rich_text: [{ text: { content: "AI 어시스턴트" } }] },
     Source: { rich_text: [{ text: { content: "ProductHunt" } }] },
     날짜: { date: { start: "2026-07-30T00:00:00.000Z" } },
+    카테고리: { select: { name: "문서 및 글쓰기" } },
+    가격: { select: { name: "부분 무료" } },
+    한국어: { checkbox: true },
   });
+});
+
+test("AI가 분류를 못 매겼으면 노션에서도 비워둔다 (사장님이 직접 고르는 용도)", () => {
+  const page = toNotionPage("db-1", { title: "탁몽", url: "", description: "", source: "Naver" });
+  const props = page.properties as Record<string, unknown>;
+  assert.deepEqual(props["카테고리"], { select: null });
+  assert.deepEqual(props["가격"], { select: null });
+  assert.deepEqual(props["한국어"], { checkbox: false });
 });
 
 test("createdAt이 없으면 현재 시각을 넣는다", () => {

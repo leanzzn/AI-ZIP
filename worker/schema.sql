@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS staging_tools (
   description TEXT    NOT NULL DEFAULT '',         -- 한 줄 설명
   url         TEXT    NOT NULL DEFAULT '',         -- 공식 홈페이지 (못 찾으면 빈 값)
   source      TEXT    NOT NULL DEFAULT '',         -- 뽑아온 블로그 글 주소
+  category    TEXT    NOT NULL DEFAULT '',         -- AI가 매긴 분야 (웹사이트 칩과 같은 글자)
+  price_type  TEXT    NOT NULL DEFAULT '',         -- AI가 매긴 가격 (무료 / 부분 무료 / 유료)
+  is_korean   INTEGER NOT NULL DEFAULT 0,          -- AI가 판단한 한국어 지원 여부
   is_synced   INTEGER NOT NULL DEFAULT 0,          -- 0 = 노션 전송 대기, 1 = 전송 완료
   created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

@@ -22,7 +22,7 @@ export default function AiCard({ id, name, summary, priceType, isKorean }: Servi
             </span>
           )}
         </div>
-        <p className="truncate text-sm text-muted">{summary}</p>
+        <p className="truncate text-sm text-muted">{summary || "설명 준비 중"}</p>
       </div>
       <svg
         width="18" height="18" viewBox="0 0 24 24" fill="none"

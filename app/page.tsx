@@ -1,8 +1,11 @@
 import Feed from "@/components/Feed";
 import { getServices } from "@/lib/services";
 
-export default function Home() {
-  const services = getServices();
+// 노션에 새 툴이 쌓이면 바로 보이도록 접속할 때 만듭니다 (노션 조회는 1시간 캐시)
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const services = await getServices();
   return (
     <div className="px-6 py-12 md:py-16">
       <div className="mx-auto mb-10 max-w-xl text-center">

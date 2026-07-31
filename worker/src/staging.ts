@@ -8,6 +8,9 @@ type StagedRow = {
   description: string;
   url: string;
   source: string;
+  category: string;
+  price_type: string;
+  is_korean: number;
   created_at: string;
 };
 
@@ -19,9 +22,15 @@ type StagedRow = {
 export async function stageTools(items: CollectedItem[], env: Env): Promise<number> {
   if (items.length === 0) return 0;
 
-  const stmt = env.DB.prepare("INSERT OR IGNORE INTO staging_tools (title, url, description, source) VALUES (?, ?, ?, ?)");
+  const stmt = env.DB.prepare(
+    "INSERT OR IGNORE INTO staging_tools (title, url, description, source, category, price_type, is_korean) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  );
 
-  const results = await env.DB.batch(items.map((t) => stmt.bind(t.title, t.url, t.description, t.source)));
+  const results = await env.DB.batch(
+    items.map((t) =>
+      stmt.bind(t.title, t.url, t.description, t.source, t.category ?? "", t.priceType ?? "", t.isKorean ? 1 : 0),
+    ),
+  );
   return results.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
 }
 
@@ -33,7 +42,7 @@ export async function stageTools(items: CollectedItem[], env: Env): Promise<numb
  */
 export async function syncToNotion(env: Env, insert = insertToNotion) {
   const { results } = await env.DB.prepare(
-    "SELECT id, title, description, url, source, created_at FROM staging_tools WHERE is_synced = 0 ORDER BY id",
+    "SELECT id, title, description, url, source, category, price_type, is_korean, created_at FROM staging_tools WHERE is_synced = 0 ORDER BY id",
   ).all<StagedRow>();
 
   const synced: number[] = [];
@@ -50,6 +59,9 @@ export async function syncToNotion(env: Env, insert = insertToNotion) {
           description: row.description,
           source: row.source,
           createdAt: row.created_at,
+          category: row.category,
+          priceType: row.price_type,
+          isKorean: row.is_korean === 1,
         },
         env,
       );

@@ -66,16 +66,36 @@ const MAX_CANDIDATES = 8;
 /** 제목에 이 중 하나도 없으면 AI 얘기가 아니라고 보고 글을 열지 않습니다 */
 const AI_KEYWORD = /(\bAI\b|A\.I|인공지능|생성형|챗봇|GPT|LLM|클로드|제미나이|미드저니|딥러닝)/i;
 
+/** 웹사이트 사이드바/칩과 순서·글자까지 똑같아야 합니다 (lib/services.ts의 CATEGORIES) */
+export const CATEGORIES = [
+  "문서 및 글쓰기",
+  "학업 및 연구",
+  "코딩 및 개발",
+  "이미지 및 영상",
+  "일상 및 생산성",
+] as const;
+
+export const PRICE_TYPES = ["무료", "부분 무료", "유료"] as const;
+
 /**
  * 판정 기준. '광고성 글' 조건은 사장님 요청으로 뺐습니다 —
  * 홍보성 어투 때문에 클로드·제미나이까지 걸러지던 문제도 같이 없어집니다.
+ *
+ * 실을지 말지(PASS/REJECT)와 분야·가격·한국어를 한 번에 물어봅니다.
+ * 따로 물어보면 AI 호출이 두 배가 되는데, 어차피 같은 정보를 보고 판단하는 일이라 한 번이면 충분합니다.
  */
 const JUDGE_PROMPT =
-  "너는 AI 서비스 디렉토리의 편집자야. 아래는 AI 서비스 하나의 이름과 설명이야. 디렉토리에 실을지 판단해.\n" +
+  "너는 AI 서비스 디렉토리의 편집자야. 아래는 AI 서비스 하나의 이름과 설명이야.\n" +
+  "디렉토리에 실을지 판단하고, 싣는다면 분류까지 해줘.\n" +
   "- 자체적인 기술력이나 독창적인 가치가 있는 서비스, 또는 많은 사람이 실제로 쓰는 알려진 서비스 → PASS\n" +
   "- 단순히 ChatGPT API만 연결한 래퍼(Wrapper) 서비스, 실체가 불분명한 서비스, " +
   "그리고 애초에 AI 서비스가 아닌 것(쇼핑몰, 크라우드펀딩, 뉴스, 블로그 등) → REJECT\n" +
-  "'PASS' 또는 'REJECT' 한 단어로만 대답해.";
+  "\n분류 기준:\n" +
+  `- 분야: ${CATEGORIES.join(" / ")} 중 딱 하나. 애매하면 "일상 및 생산성".\n` +
+  `- 가격: ${PRICE_TYPES.join(" / ")} 중 하나. 모르면 "부분 무료".\n` +
+  "- 한국어: 한국어 입출력을 제대로 지원하면 true, 아니거나 모르면 false.\n" +
+  '\n아래 JSON 하나만 출력해. 다른 말은 절대 쓰지 마.\n' +
+  '{"판정":"PASS","분야":"코딩 및 개발","가격":"부분 무료","한국어":true}';
 
 const EXTRACT_PROMPT =
   "아래 블로그 글에서 '사용자가 직접 써볼 수 있는 AI 서비스'만 뽑아줘.\n" +
@@ -252,20 +272,62 @@ async function resolveOfficialUrl(name: string, env: Env): Promise<string> {
   return roots.sort((a, b) => score(b) - score(a))[0] ?? "";
 }
 
-/** Workers AI에게 물어봐서 쓸만한 서비스면 true, 래퍼/광고글이면 false */
-export async function evaluateToolQuality(ai: Ai, text: string): Promise<boolean> {
+/** 판정 결과. pass가 false면 나머지 값은 의미 없습니다 */
+export type Verdict = {
+  pass: boolean;
+  category: (typeof CATEGORIES)[number];
+  priceType: (typeof PRICE_TYPES)[number];
+  isKorean: boolean;
+};
+
+/**
+ * Workers AI에게 물어봐서 쓸만한 서비스인지 판정하고, 분야·가격·한국어까지 같이 받아옵니다.
+ * AI가 엉뚱한 분야 이름을 지어내는 일이 있어서 목록에 없는 값은 기본값으로 되돌립니다.
+ */
+export async function evaluateToolQuality(ai: Ai, text: string): Promise<Verdict> {
   const out = (await ai.run(JUDGE_MODEL, {
     messages: [
       { role: "system", content: JUDGE_PROMPT },
       { role: "user", content: text.slice(0, 2000) },
     ],
-    max_tokens: 10,
+    max_tokens: 120,
     temperature: 0, // 같은 툴이면 같은 판정이 나오게
   })) as { response?: string };
 
-  const answer = (out.response ?? "").toUpperCase();
-  console.log("판정", JSON.stringify(answer), "←", JSON.stringify(text.slice(0, 80)));
-  return answer.includes("PASS") && !answer.includes("REJECT");
+  const raw = out.response ?? "";
+  console.log("판정", JSON.stringify(raw.slice(0, 120)), "←", JSON.stringify(text.slice(0, 80)));
+  return parseVerdict(raw);
+}
+
+/** AI 답변 문자열 → Verdict. JSON이 깨졌으면 통째로 REJECT 처리합니다 */
+export function parseVerdict(raw: string): Verdict {
+  const fallback: Verdict = { pass: false, category: "일상 및 생산성", priceType: "부분 무료", isKorean: false };
+
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return fallback;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(m[0]) as Record<string, unknown>;
+  } catch {
+    return fallback;
+  }
+
+  const 판정 = String(parsed["판정"] ?? "").toUpperCase();
+  const 분야 = String(parsed["분야"] ?? "");
+  const 가격 = String(parsed["가격"] ?? "");
+
+  return {
+    pass: 판정.includes("PASS") && !판정.includes("REJECT"),
+    // 목록에 없는 값을 지어내면 기본값으로 (웹사이트 필터가 깨지는 걸 막습니다)
+    category: (CATEGORIES as readonly string[]).includes(분야)
+      ? (분야 as Verdict["category"])
+      : fallback.category,
+    priceType: (PRICE_TYPES as readonly string[]).includes(가격)
+      ? (가격 as Verdict["priceType"])
+      : fallback.priceType,
+    isKorean: parsed["한국어"] === true,
+  };
 }
 
 /** 네이버 검색 → 블로그 본문 → AI 툴 추출 → 중복 제거 → 품질 판정 */
@@ -354,11 +416,18 @@ export async function collect(env: Env) {
     candidates.map((t) =>
       evaluateToolQuality(env.AI, `${t.title}\n${t.description}`).catch((e) => {
         console.error("품질 판정 실패", t.url, e);
-        return false; // 판정 실패한 건 저장하지 않습니다
+        // 판정 실패한 건 저장하지 않습니다
+        return { pass: false } as Verdict;
       }),
     ),
   );
-  const passed = candidates.filter((_, idx) => verdicts[idx]);
+
+  // 통과한 툴에 AI가 매긴 분야·가격·한국어를 붙여둡니다 (웹사이트가 이 값으로 필터를 겁니다)
+  const passed: CollectedItem[] = [];
+  for (const [idx, t] of candidates.entries()) {
+    const v = verdicts[idx];
+    if (v.pass) passed.push({ ...t, category: v.category, priceType: v.priceType, isKorean: v.isKorean });
+  }
 
   const noUrl = passed.filter((t) => t.url === "").length;
   console.log(

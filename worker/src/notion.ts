@@ -24,6 +24,12 @@ export type CollectedItem = {
   source: string;
   /** ISO 문자열. 없으면 현재 시각 */
   createdAt?: string;
+  /** AI가 매긴 분야. 웹사이트 카테고리 칩과 같은 글자여야 합니다 */
+  category?: string;
+  /** AI가 매긴 가격 유형 (무료 / 부분 무료 / 유료) */
+  priceType?: string;
+  /** AI가 판단한 한국어 지원 여부 */
+  isKorean?: boolean;
 };
 
 /**
@@ -43,6 +49,10 @@ export function toNotionPage(databaseId: string, data: CollectedItem): CreatePag
       Description: { rich_text: [{ text: { content: (data.description ?? "").slice(0, 2000) } }] },
       Source: { rich_text: [{ text: { content: data.source } }] },
       날짜: { date: { start: data.createdAt ?? new Date().toISOString() } },
+      // AI가 매긴 분류. 빈 값이면 노션에서도 비워둡니다 (사장님이 직접 고르시는 용도)
+      카테고리: data.category ? { select: { name: data.category } } : { select: null },
+      가격: data.priceType ? { select: { name: data.priceType } } : { select: null },
+      한국어: { checkbox: data.isKorean === true },
     },
   };
 }

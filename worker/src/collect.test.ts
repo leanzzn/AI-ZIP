@@ -1,7 +1,15 @@
 // 실행: node --experimental-strip-types --test worker/src/collect.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateToolQuality, normalizeUrl, parseJsonArray, siteRoot, stripHtml, toReadableUrl } from "./collect.ts";
+import {
+  evaluateToolQuality,
+  normalizeUrl,
+  parseJsonArray,
+  parseVerdict,
+  siteRoot,
+  stripHtml,
+  toReadableUrl,
+} from "./collect.ts";
 
 const fakeAi = (answer: string) => ({ run: async () => ({ response: answer }) }) as unknown as Ai;
 
@@ -38,9 +46,27 @@ test("검색 결과 주소에서 도메인 뿌리만 남긴다", () => {
   assert.equal(siteRoot("주소아님"), "");
 });
 
-test("PASS만 통과시킨다", async () => {
-  assert.equal(await evaluateToolQuality(fakeAi("PASS"), "x"), true);
-  assert.equal(await evaluateToolQuality(fakeAi(" reject "), "x"), false);
-  assert.equal(await evaluateToolQuality(fakeAi("PASS 또는 REJECT"), "x"), false);
-  assert.equal(await evaluateToolQuality(fakeAi(""), "x"), false);
+test("PASS만 통과시키고 분류까지 받아온다", async () => {
+  const 결과 = await evaluateToolQuality(
+    fakeAi('{"판정":"PASS","분야":"코딩 및 개발","가격":"유료","한국어":true}'),
+    "x",
+  );
+  assert.deepEqual(결과, { pass: true, category: "코딩 및 개발", priceType: "유료", isKorean: true });
+
+  assert.equal((await evaluateToolQuality(fakeAi('{"판정":"REJECT"}'), "x")).pass, false);
+  // JSON이 아예 안 오면 저장하지 않습니다
+  assert.equal((await evaluateToolQuality(fakeAi("PASS"), "x")).pass, false);
+  assert.equal((await evaluateToolQuality(fakeAi(""), "x")).pass, false);
+});
+
+test("AI가 지어낸 분야·가격은 기본값으로 되돌린다", () => {
+  // 웹사이트 칩에 없는 분야가 들어오면 필터에서 영영 안 보이게 되므로 막습니다
+  const 지어냄 = parseVerdict('{"판정":"PASS","분야":"AI 에이전트","가격":"구독제","한국어":"네"}');
+  assert.deepEqual(지어냄, { pass: true, category: "일상 및 생산성", priceType: "부분 무료", isKorean: false });
+
+  // 앞뒤에 설명을 붙여 보내도 JSON만 꺼내 씁니다
+  const 수다 = parseVerdict('네, 판단했습니다:\n{"판정":"PASS","분야":"학업 및 연구","가격":"무료","한국어":false}\n감사합니다');
+  assert.deepEqual(수다, { pass: true, category: "학업 및 연구", priceType: "무료", isKorean: false });
+
+  assert.equal(parseVerdict("{깨진 JSON").pass, false);
 });

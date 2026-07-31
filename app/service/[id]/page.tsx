@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AiCard from "@/components/AiCard";
-import { getService, getServices, getRelated } from "@/lib/services";
+import { getService, getRelated } from "@/lib/services";
 
-export function generateStaticParams() {
-  return getServices().map((s) => ({ id: s.id }));
-}
+// 노션에 새로 들어온 툴도 바로 열리게 (노션 조회는 1시간 캐시)
+export const dynamic = "force-dynamic";
 
 export default async function ServicePage({
   params,
@@ -13,10 +12,10 @@ export default async function ServicePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const service = getService(id);
+  const service = await getService(id);
   if (!service) notFound();
 
-  const related = getRelated(service);
+  const related = await getRelated(service);
 
   return (
     <div className="px-6 py-10">
@@ -51,20 +50,31 @@ export default async function ServicePage({
         </div>
       </div>
 
-      <a
-        href={service.websiteUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-foreground px-5 py-3 font-bold transition-colors hover:bg-border"
-      >
-        웹사이트 바로가기
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M7 17L17 7M7 7h10v10" />
-        </svg>
-      </a>
+      {/* 주소를 아직 못 찾은 툴은 버튼 자리만 남기고 눌리지 않게 둡니다 */}
+      {service.websiteUrl ? (
+        <a
+          href={service.websiteUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-6 flex items-center justify-center gap-2 rounded-xl border-2 border-foreground px-5 py-3 font-bold transition-colors hover:bg-border"
+        >
+          웹사이트 바로가기
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 17L17 7M7 7h10v10" />
+          </svg>
+        </a>
+      ) : (
+        <button
+          disabled
+          className="mt-6 flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border px-5 py-3 font-bold text-muted"
+        >
+          웹사이트 주소 준비 중
+        </button>
+      )}
 
-      {/* 중단 */}
+      {/* 중단 — 아직 안 채워진 툴은 이 부분이 통째로 빠집니다 */}
+      {service.useCases && service.useCases.length > 0 && (
       <section className="mt-10">
         <h2 className="mb-3 font-bold">이럴 때 쓰면 좋아요</h2>
         <ul className="flex flex-col gap-2">
@@ -80,15 +90,19 @@ export default async function ServicePage({
           ))}
         </ul>
       </section>
+      )}
 
       <section className="mt-8 flex flex-col gap-2 rounded-xl border border-border px-4 py-4 text-sm">
+        {/* 아직 안 채워진 항목은 "확인 중"으로 자리만 잡아둡니다 */}
         <div className="flex justify-between gap-4">
           <span className="text-muted">회원가입</span>
-          <span className="font-bold">{service.needsSignup ? "필요" : "없이 사용 가능"}</span>
+          <span className="font-bold">
+            {service.needsSignup === undefined ? "확인 중" : service.needsSignup ? "필요" : "없이 사용 가능"}
+          </span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-muted">무료 사용 범위</span>
-          <span className="text-right font-bold">{service.freeScope}</span>
+          <span className="text-right font-bold">{service.freeScope || "확인 중"}</span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-muted">한국어 지원</span>

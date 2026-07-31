@@ -7,12 +7,15 @@ export type Service = {
   category: string;
   priceType: PriceType;
   isKorean: boolean;
+  /** 노션에서 주소를 아직 못 채운 툴은 빈 문자열. 화면에서 바로가기 버튼이 껍데기로 나옵니다 */
   websiteUrl: string;
-  userCount: number;
   isNew?: boolean;
-  needsSignup: boolean;
-  freeScope: string;
-  useCases: string[];
+  // 아래 네 가지는 손으로 정리한 24개에만 있습니다.
+  // 수집기가 자동으로 모아온 툴은 비어 있고, 화면에서는 그 부분만 빠진 채로 보입니다.
+  userCount?: number;
+  needsSignup?: boolean;
+  freeScope?: string;
+  useCases?: string[];
 };
 
 // 사이드바/칩 순서와 항상 일치시킬 것 (CLAUDE.md 기능 2)
@@ -27,7 +30,8 @@ export const CATEGORIES = [
 // 필터 칩에 쓰는 값 (전체 + 오늘 추가 + 카테고리 5개)
 export const FILTERS = ["전체", "오늘 새롭게 추가된 AI", ...CATEGORIES] as const;
 
-const services: Service[] = [
+/** 손으로 정리한 24개. 노션이 비어있거나 잠깐 안 될 때도 사이트가 비지 않게 항상 깔고 갑니다 */
+const curated: Service[] = [
   {
     id: "chatgpt", name: "ChatGPT", summary: "대화로 뭐든 물어보는 만능 AI",
     category: "문서 및 글쓰기", priceType: "부분 무료", isKorean: true,
@@ -195,16 +199,131 @@ const services: Service[] = [
   },
 ];
 
-export function getServices(): Service[] {
-  return [...services].sort((a, b) => b.userCount - a.userCount);
+// ─────────────────────────────────────────────────────────────
+// 노션에서 읽어오기
+// 수집기(워커)가 6시간마다 모아서 자정에 노션으로 보낸 툴들을 여기서 가져옵니다.
+// ─────────────────────────────────────────────────────────────
+
+/** 노션을 매 접속마다 부르면 느려서 1시간 동안은 갖고 있던 걸 씁니다 */
+const CACHE_MS = 60 * 60 * 1000;
+const NOTION_VERSION = "2025-09-03";
+
+let cache: { at: number; services: Service[] } | undefined;
+let dataSourceId: string | undefined;
+
+type NotionProp = {
+  url?: string | null;
+  checkbox?: boolean;
+  select?: { name: string } | null;
+  date?: { start: string } | null;
+  title?: { plain_text: string }[];
+  rich_text?: { plain_text: string }[];
+};
+
+async function notionFetch(path: string, body?: unknown) {
+  const res = await fetch(`https://api.notion.com/v1/${path}`, {
+    method: body ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`노션 조회 실패 ${res.status} ${await res.text()}`);
+  return res.json();
 }
 
-export function getService(id: string): Service | undefined {
-  return services.find((s) => s.id === id);
+/** 노션 페이지 한 장 → 화면에 쓰는 Service. 비어있는 항목은 비운 채로 둡니다 */
+function toService(page: { id: string; properties: Record<string, NotionProp> }): Service | undefined {
+  const p = page.properties;
+  const name = p["이름"]?.title?.[0]?.plain_text?.trim();
+  if (!name) return undefined; // 이름 없는 줄은 화면에 못 씁니다
+
+  const 날짜 = p["날짜"]?.date?.start;
+  const 하루전 = Date.now() - 24 * 60 * 60 * 1000;
+
+  return {
+    // 노션 페이지 id를 주소로 씁니다 (이름이 바뀌어도 링크가 안 깨집니다)
+    id: page.id.replace(/-/g, ""),
+    name,
+    summary: p["Description"]?.rich_text?.[0]?.plain_text?.trim() ?? "",
+    category: p["카테고리"]?.select?.name ?? "일상 및 생산성",
+    priceType: (p["가격"]?.select?.name as PriceType) ?? "부분 무료",
+    isKorean: p["한국어"]?.checkbox === true,
+    websiteUrl: p["URL"]?.url ?? "",
+    isNew: 날짜 !== undefined && 날짜 !== null && Date.parse(날짜) > 하루전,
+  };
 }
 
-export function getRelated(service: Service, limit = 3): Service[] {
-  return getServices()
+/** 노션에 쌓인 툴 전부. 실패하면 빈 배열 — 노션이 죽어도 사이트는 24개로 계속 돕니다 */
+async function fetchFromNotion(): Promise<Service[]> {
+  if (!process.env.NOTION_TOKEN || !process.env.NOTION_DATABASE_ID) return [];
+
+  try {
+    if (!dataSourceId) {
+      const db = (await notionFetch(`databases/${process.env.NOTION_DATABASE_ID}`)) as {
+        data_sources?: { id: string }[];
+      };
+      dataSourceId = db.data_sources?.[0]?.id;
+      if (!dataSourceId) return [];
+    }
+
+    const found: Service[] = [];
+    let cursor: string | undefined;
+
+    // 노션은 한 번에 100개까지만 주므로 끝까지 넘겨가며 받습니다
+    do {
+      const res = (await notionFetch(`data_sources/${dataSourceId}/query`, {
+        page_size: 100,
+        start_cursor: cursor,
+        sorts: [{ property: "날짜", direction: "descending" }],
+      })) as { results: Parameters<typeof toService>[0][]; next_cursor: string | null; has_more: boolean };
+
+      for (const page of res.results) {
+        const s = toService(page);
+        if (s) found.push(s);
+      }
+      cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
+    } while (cursor);
+
+    return found;
+  } catch (e) {
+    console.error("노션에서 툴 목록을 못 가져왔습니다", e);
+    return [];
+  }
+}
+
+/**
+ * 화면에 뿌릴 전체 목록 = 손으로 정리한 24개 + 노션에 쌓인 것.
+ * 같은 툴이 양쪽에 있으면 손으로 정리한 쪽(설명이 더 자세함)을 씁니다.
+ */
+export async function getServices(): Promise<Service[]> {
+  if (cache && Date.now() - cache.at < CACHE_MS) return cache.services;
+
+  const 노션 = await fetchFromNotion();
+
+  const 이미있음 = new Set([
+    ...curated.map((s) => s.name.toLowerCase()),
+    ...curated.map((s) => s.websiteUrl.replace(/\/+$/, "").toLowerCase()),
+  ]);
+  const 새로운것 = 노션.filter(
+    (s) => !이미있음.has(s.name.toLowerCase()) && !이미있음.has(s.websiteUrl.replace(/\/+$/, "").toLowerCase()),
+  );
+
+  // 손으로 정리한 24개는 이용자 수 순, 새로 모아온 건 그 뒤에 최신순으로 붙습니다
+  const services = [...curated].sort((a, b) => (b.userCount ?? 0) - (a.userCount ?? 0)).concat(새로운것);
+
+  cache = { at: Date.now(), services };
+  return services;
+}
+
+export async function getService(id: string): Promise<Service | undefined> {
+  return (await getServices()).find((s) => s.id === id);
+}
+
+export async function getRelated(service: Service, limit = 3): Promise<Service[]> {
+  return (await getServices())
     .filter((s) => s.category === service.category && s.id !== service.id)
     .slice(0, limit);
 }
