@@ -1,0 +1,29 @@
+name = "ai-zip-collector"
+main = "src/index.ts"
+compatibility_date = "2026-07-24"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare Workers AI (수집한 글의 품질 판정에 사용)
+[ai]
+binding = "AI"
+
+# 임시 보관함. 6시간마다 수집한 툴이 여기 쌓였다가 자정에 노션으로 넘어갑니다.
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-zip-staging"
+database_id = "9faa46ce-7de9-4f68-a452-b5761a578f0a"
+
+# 크론은 한 곳에 모아 적고, 워커 안에서 어느 쪽이 울렸는지 보고 갈라집니다.
+# Cloudflare 크론은 UTC 기준이라 한국시간에서 9시간을 빼서 적습니다.
+#   "0 */6 * * *" → 6시간마다 (한국시간 3시·9시·15시·21시): 수집 + AI 판정 → D1에 임시 저장
+#   "0 15 * * *"  → 한국시간 매일 자정: D1에 쌓인 걸 노션으로 일괄 전송
+# 이 값을 바꾸면 src/index.ts 의 SYNC_CRON 도 똑같이 바꿔주세요.
+[triggers]
+crons = ["0 */6 * * *", "0 15 * * *"]
+
+# 비밀값은 파일에 넣지 않습니다.
+# 로컬:  worker/.dev.vars 에 작성 (.gitignore 처리됨)
+# 배포:  npx wrangler secret put NOTION_TOKEN
+#        npx wrangler secret put NOTION_DATABASE_ID
+#        npx wrangler secret put NAVER_CLIENT_ID
+#        npx wrangler secret put NAVER_CLIENT_SECRET

@@ -8,14 +8,22 @@
     "start": "next start",
     "lint": "eslint",
     "pages:build": "opennextjs-cloudflare build",
-    "deploy": "opennextjs-cloudflare build && wrangler deploy"
+    "deploy": "opennextjs-cloudflare build && wrangler deploy",
+    "worker:dev": "wrangler dev -c worker/wrangler.toml",
+    "worker:deploy": "wrangler deploy -c worker/wrangler.toml",
+    "worker:test": "node --experimental-strip-types --test worker/src/notion.test.ts worker/src/collect.test.ts worker/src/staging.test.ts",
+    "worker:db:local": "wrangler d1 execute ai-zip-staging --local --file=worker/schema.sql",
+    "worker:db:remote": "wrangler d1 execute ai-zip-staging --remote --file=worker/schema.sql"
   },
   "dependencies": {
+    "@notionhq/client": "^5.23.3",
+    "hono": "^4.12.32",
     "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260730.1",
     "@opennextjs/cloudflare": "^1.20.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
