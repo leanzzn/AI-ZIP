@@ -13,7 +13,10 @@
     "worker:deploy": "wrangler deploy -c worker/wrangler.toml",
     "worker:test": "node --experimental-strip-types --test worker/src/notion.test.ts worker/src/collect.test.ts worker/src/staging.test.ts",
     "worker:db:local": "wrangler d1 execute ai-zip-staging --local --file=worker/schema.sql",
-    "worker:db:remote": "wrangler d1 execute ai-zip-staging --remote --file=worker/schema.sql"
+    "worker:db:remote": "wrangler d1 execute ai-zip-staging --remote --file=worker/schema.sql",
+    "seed:sql": "node --experimental-strip-types scripts/seed-to-d1.ts",
+    "enrich": "node --experimental-strip-types scripts/enrich-all.ts",
+    "push:notion": "node --experimental-strip-types --env-file=.env.local scripts/push-to-notion.ts"
   },
   "dependencies": {
     "@notionhq/client": "^5.23.3",
@@ -29,6 +32,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "csv-parse": "^7.0.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",

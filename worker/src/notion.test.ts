@@ -9,6 +9,7 @@ test("속성 구조가 노션 규격과 맞는다", () => {
     url: "https://claude.ai",
     description: "AI 어시스턴트",
     source: "ProductHunt",
+    overview: "긴 글을 잘 읽는 AI입니다.\n\n하루 일정량은 무료입니다.",
     createdAt: "2026-07-30T00:00:00.000Z",
     category: "문서 및 글쓰기",
     priceType: "부분 무료",
@@ -20,6 +21,7 @@ test("속성 구조가 노션 규격과 맞는다", () => {
     이름: { title: [{ text: { content: "Claude" } }] },
     URL: { url: "https://claude.ai" },
     Description: { rich_text: [{ text: { content: "AI 어시스턴트" } }] },
+    소개글: { rich_text: [{ text: { content: "긴 글을 잘 읽는 AI입니다.\n\n하루 일정량은 무료입니다." } }] },
     Source: { rich_text: [{ text: { content: "ProductHunt" } }] },
     날짜: { date: { start: "2026-07-30T00:00:00.000Z" } },
     카테고리: { select: { name: "문서 및 글쓰기" } },
@@ -34,6 +36,8 @@ test("AI가 분류를 못 매겼으면 노션에서도 비워둔다 (사장님�
   assert.deepEqual(props["카테고리"], { select: null });
   assert.deepEqual(props["가격"], { select: null });
   assert.deepEqual(props["한국어"], { checkbox: false });
+  // 소개글도 못 받았으면 빈 칸으로 둡니다 (사장님이 노션에서 직접 쓰는 자리)
+  assert.deepEqual(props["소개글"], { rich_text: [] });
 });
 
 test("createdAt이 없으면 현재 시각을 넣는다", () => {

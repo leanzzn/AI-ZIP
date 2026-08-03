@@ -47,3 +47,7 @@ next-env.d.ts
 # cloudflare worker secrets
 .dev.vars*
 !.dev.vars.example
+
+# 일회성 시딩 (원본 CSV, 스크립트가 만들어내는 SQL)
+/scripts/data
+/worker/seed-kaggle.sql

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pickKeywords } from "./collect.ts";
 import type { Env } from "./notion.ts";
-import { syncToNotion } from "./staging.ts";
+import { findStagedTitles, syncToNotion } from "./staging.ts";
 
 /** 아주 얇은 가짜 D1. 실행된 SQL과 바인딩 값을 그대로 기록해둡니다 */
 function fakeDb(rows: Record<string, unknown>[]) {
@@ -69,6 +69,26 @@ test("보낼 게 없으면 UPDATE를 아예 돌리지 않는다", async () => {
     실행된SQL.filter((q) => q.sql.startsWith("UPDATE")).length,
     0,
   );
+});
+
+test("보관함에 이미 있는 이름은 상세를 열기 전에 걸러낸다", async () => {
+  // D1은 소문자로 맞춰서 돌려줍니다 (대소문자만 다른 같은 툴을 놓치지 않으려고)
+  const { env, 실행된SQL } = fakeDb([{ t: "cursor" }]);
+
+  const 아는것 = await findStagedTitles(["Cursor", "  처음보는툴  ", "cursor"], env);
+  assert.deepEqual([...아는것], ["cursor"]);
+
+  // 같은 이름이 두 번 들어와도 물음표는 한 번만 (Cursor / cursor → 하나)
+  const select = 실행된SQL.find((q) => q.sql.startsWith("SELECT lower(title)"));
+  assert.ok(select);
+  assert.match(select.sql, /IN \(\?,\?\)/);
+  assert.deepEqual(select.args, ["cursor", "처음보는툴"]);
+});
+
+test("물어볼 이름이 없으면 D1을 아예 건드리지 않는다", async () => {
+  const { env, 실행된SQL } = fakeDb([]);
+  assert.equal((await findStagedTitles(["", "   "], env)).size, 0);
+  assert.equal(실행된SQL.length, 0);
 });
 
 test("검색어는 매번 목록 안에서 요청한 개수만큼만 뽑는다", () => {

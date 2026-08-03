@@ -26,6 +26,8 @@ export type CollectedItem = {
   source: string;
   /** 품질 판정에만 쓰는 긴 원문 설명. 저장하지 않습니다 */
   detail?: string;
+  /** 상세페이지에 실릴 긴 소개글. 노션 "소개글" 칸으로 들어가고 사장님이 거기서 고칩니다 */
+  overview?: string;
   /** ISO 문자열. 없으면 현재 시각 */
   createdAt?: string;
   /** AI가 매긴 분야. 웹사이트 카테고리 칩과 같은 글자여야 합니다 */
@@ -51,6 +53,8 @@ export function toNotionPage(databaseId: string, data: CollectedItem): CreatePag
       // 주소를 못 찾았으면 비워둡니다 (사장님이 노션에서 직접 채우는 용도)
       URL: { url: data.url?.trim() || null },
       Description: { rich_text: [{ text: { content: (data.description ?? "").slice(0, 2000) } }] },
+      // 상세페이지 본문. AI가 쓴 초안이라 사장님이 노션에서 고쳐 쓰시는 자리입니다
+      소개글: { rich_text: data.overview ? [{ text: { content: data.overview.slice(0, 2000) } }] : [] },
       Source: { rich_text: [{ text: { content: data.source } }] },
       날짜: { date: { start: data.createdAt ?? new Date().toISOString() } },
       // AI가 매긴 분류. 빈 값이면 노션에서도 비워둡니다 (사장님이 직접 고르시는 용도)
