@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import Feed from "@/components/Feed";
 import { getServices } from "@/lib/services";
+
+export const metadata: Metadata = {
+  description:
+    "한국어로 쓸 수 있는 AI 서비스를 분야별로 모았습니다. 무료 여부와 한국어 지원을 한눈에 비교하고 바로 써보세요.",
+  alternates: { canonical: "/" },
+};
 
 // 노션에 새 툴이 쌓이면 바로 보이도록 접속할 때 만듭니다 (노션 조회는 1시간 캐시)
 export const dynamic = "force-dynamic";

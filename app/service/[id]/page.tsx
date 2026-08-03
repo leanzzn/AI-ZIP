@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AiCard from "@/components/AiCard";
@@ -5,6 +6,35 @@ import { getService, getRelated } from "@/lib/services";
 
 // 노션에 새로 들어온 툴도 바로 열리게 (노션 조회는 1시간 캐시)
 export const dynamic = "force-dynamic";
+
+/**
+ * 서비스마다 제목·설명을 따로 달아줍니다.
+ * 예전엔 모든 페이지가 "AI.ZIP" 하나였습니다 — 검색엔진과 애드센스가 중복 콘텐츠로 봅니다.
+ *
+ * 소개글이 아직 비어 있으면 검색엔진에 올리지 않습니다(noindex). 이름·태그·버튼만 남은 페이지는
+ * 애드센스가 말하는 "콘텐츠가 거의 없는 페이지"라 심사에 불리합니다.
+ * 노션에서 소개글을 채우면 자동으로 풀립니다. 화면에는 지금도 그대로 보입니다.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const service = await getService(id);
+  if (!service) return { title: "찾을 수 없는 서비스", robots: { index: false, follow: true } };
+
+  const 알맹이있음 = Boolean(service.overview);
+
+  return {
+    title: service.name,
+    description: service.summary
+      ? `${service.name} — ${service.summary}. 가격, 무료 사용 범위, 한국어 지원 여부를 정리했습니다.`
+      : `${service.name}의 가격과 한국어 지원 여부를 정리했습니다.`,
+    alternates: { canonical: `/service/${service.id}` },
+    robots: 알맹이있음 ? undefined : { index: false, follow: true },
+  };
+}
 
 export default async function ServicePage({
   params,
@@ -71,6 +101,22 @@ export default async function ServicePage({
         >
           웹사이트 주소 준비 중
         </button>
+      )}
+
+      {/* 긴 소개글 — 노션 "소개글" 칸에서 관리합니다. 비어 있으면 이 부분이 통째로 빠집니다 */}
+      {service.overview && (
+        <section className="mt-10">
+          <h2 className="mb-3 font-bold">이 AI는 어떤 서비스인가요</h2>
+          <div className="flex flex-col gap-4 leading-7 text-muted">
+            {service.overview
+              .split(/\n+/)
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+          </div>
+        </section>
       )}
 
       {/* 중단 — 아직 안 채워진 툴은 이 부분이 통째로 빠집니다 */}
