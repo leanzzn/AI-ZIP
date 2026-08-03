@@ -78,7 +78,10 @@ export async function stageTools(items: CollectedItem[], env: Env): Promise<numb
  *
  * 한 번에 MAX_PER_RUN 건까지만 보냅니다. 워커는 요청 하나당 바깥 호출이 50번까지라
  * 대기가 수천 건 쌓여 있으면(예: 데이터 일괄 투입) 제한에 걸려 통째로 실패하기 때문입니다.
- * 남은 건 다음 자정에 이어서 갑니다. 한 번에 많이 밀어넣어야 하면 scripts/push-to-notion.ts 를 쓰세요.
+ * 남은 건 다음 시간에 이어서 갑니다. 한 번에 많이 밀어넣어야 하면 scripts/push-to-notion.ts 를 쓰세요.
+ *
+ * is_enriched = 1 조건이 반드시 있어야 합니다. 외부 데이터셋은 영어인 채로 들어와서
+ * 번역 전에는 is_enriched = 0 입니다. 이 조건이 없으면 영어 설명이 그대로 사이트에 올라갑니다.
  *
  * insert 인자는 테스트에서 가짜 노션을 끼우기 위한 것입니다. 실제 실행에선 건드릴 일 없습니다.
  */
@@ -87,7 +90,9 @@ const MAX_PER_RUN = 40;
 export async function syncToNotion(env: Env, insert = insertToNotion) {
   const { results } = await env.DB.prepare(
     `SELECT id, title, description, overview, url, source, category, price_type, is_korean, created_at
-       FROM staging_tools WHERE is_synced = 0 ORDER BY id LIMIT ${MAX_PER_RUN}`,
+       FROM staging_tools
+      WHERE is_synced = 0 AND is_enriched = 1
+      ORDER BY id LIMIT ${MAX_PER_RUN}`,
   ).all<StagedRow>();
 
   const synced: number[] = [];

@@ -5,10 +5,11 @@ import { type Env } from "./notion";
 import { stageTools, syncToNotion } from "./staging";
 
 /**
- * wrangler.toml [triggers] 의 자정 크론. 이 값이 울리면 노션 전송, 아니면 수집입니다.
- * UTC 15:00 = 한국시간 00:00 이라 "0 15" 입니다.
+ * wrangler.toml [triggers] 에 적힌 크론. 어느 게 울렸는지 보고 할 일을 고릅니다.
+ * 이 값을 바꾸면 wrangler.toml 도 똑같이 바꿔주세요.
  */
-const SYNC_CRON = "0 15 * * *";
+const SYNC_CRON = "0 * * * *"; // 매시 정각: 보관함 → 노션 (한 번에 40건)
+const ENRICH_CRON = "30 */3 * * *"; // 3시간마다: 영어로 들어온 툴을 한국어로 번역 (한 번에 100건)
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -59,14 +60,25 @@ async function runCollect(env: Env) {
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // 자정(UTC 00:00)에는 두 크론이 같이 울립니다. Cloudflare가 각각 한 번씩 불러주기 때문에
-    // event.cron 만 보고 갈라주면 수집과 전송이 순서대로 다 돌아갑니다.
-    const 자정배치 = event.cron === SYNC_CRON;
+    /**
+     * 크론이 여러 개 겹치는 시각에도 Cloudflare가 각각 한 번씩 따로 불러줍니다.
+     * 호출 한도(요청당 50번)도 각각 따로 세기 때문에 셋이 서로 방해하지 않습니다.
+     *
+     * 번역은 3시간마다 100건씩(하루 800건) 돕니다. 더 자주 돌리면 Workers AI 하루 한도를
+     * 다 써버려서 정작 수집 쪽 판정이 멈춥니다. 한도가 떨어지면 enrich 가 저장을 건너뛰고
+     * 멈추니(오류를 돌려줍니다) 데이터가 망가지지는 않습니다.
+     */
+    const [이름, 할일] =
+      event.cron === SYNC_CRON
+        ? (["노션 전송", () => syncToNotion(env)] as const)
+        : event.cron === ENRICH_CRON
+          ? (["번역", () => enrich(env)] as const)
+          : (["수집", () => runCollect(env)] as const);
 
     ctx.waitUntil(
-      (자정배치 ? syncToNotion(env) : runCollect(env))
-        .then((r) => console.log(자정배치 ? "노션 전송 완료" : "수집 완료", r))
-        .catch((e) => console.error(자정배치 ? "노션 전송 실패" : "수집 실패", e)),
+      할일()
+        .then((r) => console.log(`${이름} 완료`, r))
+        .catch((e) => console.error(`${이름} 실패`, e)),
     );
   },
 } satisfies ExportedHandler<Env>;
