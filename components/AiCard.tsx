@@ -1,7 +1,7 @@
 import Link from "next/link";
-import type { Service } from "@/lib/services";
+import type { ListItem } from "@/lib/services";
 
-export default function AiCard({ id, name, summary, priceType, isKorean }: Service) {
+export default function AiCard({ id, name, summary, priceType, isKorean }: ListItem) {
   return (
     <Link
       href={`/service/${id}`}

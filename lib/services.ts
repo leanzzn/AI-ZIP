@@ -20,6 +20,30 @@ export type Service = {
   useCases?: string[];
 };
 
+/**
+ * 목록 화면이 실제로 쓰는 항목만 추린 것.
+ *
+ * 목록은 클라이언트 컴포넌트(Feed)라서, 넘긴 값이 전부 HTML에 글자로 박혀 브라우저로 내려갑니다.
+ * 예전엔 Service 를 통째로 넘기는 바람에 상세페이지용 긴 소개글까지 1,300개분이 같이 실려
+ * 첫 화면이 2MB였습니다. 목록에 안 쓰는 건 빼서 내려보냅니다.
+ */
+export type ListItem = Pick<
+  Service,
+  "id" | "name" | "summary" | "category" | "priceType" | "isKorean" | "isNew"
+>;
+
+export function toListItem(s: Service): ListItem {
+  return {
+    id: s.id,
+    name: s.name,
+    summary: s.summary,
+    category: s.category,
+    priceType: s.priceType,
+    isKorean: s.isKorean,
+    isNew: s.isNew,
+  };
+}
+
 // 사이드바/칩 순서와 항상 일치시킬 것 (CLAUDE.md 기능 2)
 export const CATEGORIES = [
   "문서 및 글쓰기",
@@ -356,6 +380,8 @@ for (const s of curated) s.overview = overviews[s.id];
 
 /** 노션을 매 접속마다 부르면 느려서 1시간 동안은 갖고 있던 걸 씁니다 */
 const CACHE_MS = 60 * 60 * 1000;
+/** 워커가 재시작돼도 남는 캐시의 이름표. 진짜 주소가 아니라 열쇠로만 씁니다 */
+const CACHE_KEY = "https://ai-zip.internal/notion-services";
 const NOTION_VERSION = "2025-09-03";
 
 let cache: { at: number; services: Service[] } | undefined;
@@ -408,6 +434,48 @@ function toService(page: { id: string; properties: Record<string, NotionProp> })
   };
 }
 
+/**
+ * 노션에서 읽어온 목록을 클라우드플레어 캐시에 맡겨둡니다.
+ *
+ * 아래 `cache` 변수만 쓰던 때는 워커가 잠깐 쉬었다 깨어나면 캐시가 통째로 사라져서,
+ * 그때 들어온 손님이 노션을 처음부터 다시 부르는 동안 10초를 기다렸습니다
+ * (툴 1,300개면 노션에 14번, 3,500개면 35번 물어봐야 합니다).
+ * 이 캐시는 워커가 재시작해도 남아서 그런 손님이 없어집니다. 따로 만들 것도, 돈 드는 것도 없습니다.
+ *
+ * ponytail: 캐시가 만료되는 순간에 손님이 여럿 몰리면 그만큼 노션을 동시에 부릅니다.
+ *           실제로 문제가 되면 그때 자물쇠를 걸면 됩니다 (지금 트래픽에선 과합니다).
+ */
+async function fetchFromNotionCached(): Promise<Service[]> {
+  const store = typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : undefined;
+  if (!store) return fetchFromNotion(); // 로컬 개발 등 캐시가 없는 곳
+
+  try {
+    const hit = await store.match(CACHE_KEY);
+    if (hit) return (await hit.json()) as Service[];
+  } catch {
+    // 캐시가 깨져 있으면 그냥 새로 불러옵니다
+  }
+
+  const services = await fetchFromNotion();
+  // 노션이 실패해서 빈 배열이 온 걸 저장해두면 한 시간 동안 사이트가 24개로 굳습니다
+  if (services.length > 0) {
+    try {
+      await store.put(
+        CACHE_KEY,
+        new Response(JSON.stringify(services), {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": `max-age=${CACHE_MS / 1000}`,
+          },
+        }),
+      );
+    } catch {
+      // 저장에 실패해도 화면은 그대로 나갑니다
+    }
+  }
+  return services;
+}
+
 /** 노션에 쌓인 툴 전부. 실패하면 빈 배열 — 노션이 죽어도 사이트는 24개로 계속 돕니다 */
 async function fetchFromNotion(): Promise<Service[]> {
   if (!process.env.NOTION_TOKEN || !process.env.NOTION_DATABASE_ID) return [];
@@ -453,7 +521,7 @@ async function fetchFromNotion(): Promise<Service[]> {
 export async function getServices(): Promise<Service[]> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.services;
 
-  const 노션 = await fetchFromNotion();
+  const 노션 = await fetchFromNotionCached();
 
   // 같은 툴인지 알아보는 열쇠 = 이름과 주소. 노션은 "Canva", 여기는 "Canva AI" 처럼
   // 이름이 조금 달라도 주소가 같으면 같은 툴로 봅니다.

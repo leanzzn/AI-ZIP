@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Feed from "@/components/Feed";
-import { getServices } from "@/lib/services";
+import { getServices, toListItem } from "@/lib/services";
 
 export const metadata: Metadata = {
   description:
@@ -23,7 +23,7 @@ export default async function Home() {
           이름·설명으로 검색하거나 분야로 골라보세요
         </p>
       </div>
-      <Feed services={services} />
+      <Feed services={services.map(toListItem)} />
     </div>
   );
 }

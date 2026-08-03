@@ -32,5 +32,6 @@
   ],
   // worker/ 는 자기 tsconfig(worker/tsconfig.json)로 따로 검사합니다.
   // 웹사이트(브라우저)와 워커(Cloudflare)는 쓸 수 있는 기능이 달라서 같이 검사하면 안 됩니다.
-  "exclude": ["node_modules", "worker", ".open-next"]
+  // scripts/ 도 마찬가지입니다 — 내 컴퓨터에서 node 로만 돌리는 도구라 웹사이트 빌드와 무관합니다.
+  "exclude": ["node_modules", "worker", "scripts", ".open-next"]
 }
