@@ -28,14 +28,15 @@ app.get("/staging", async (c) => {
 // 실패하면 "Internal Server Error" 대신 왜 실패했는지 그대로 보여줍니다
 app.onError((err, c) => c.json({ ok: false, error: err.message }, 500));
 
-/** 6시간마다: 네이버 검색 → AI 툴 추출 → 품질 판정 → 임시 보관함(D1)에 저장 */
+/** 6시간마다: 네이버 검색 + Product Hunt(동시에) → AI 툴 추출 → 품질 판정 → 임시 보관함(D1)에 저장 */
 async function runCollect(env: Env) {
-  const { blogs, newBlogs, tools, passed, noUrl } = await collect(env);
+  const { blogs, newBlogs, ph, tools, passed, noUrl } = await collect(env);
   const staged = await stageTools(passed, env);
 
   return {
     검색된블로그: blogs,
     안읽은블로그: newBlogs,
+    해외프로덕트: ph,
     찾은툴: tools,
     AI통과: passed.length,
     보관함저장: staged,

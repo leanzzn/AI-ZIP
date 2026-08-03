@@ -27,3 +27,5 @@ crons = ["0 */6 * * *", "0 15 * * *"]
 #        npx wrangler secret put NOTION_DATABASE_ID
 #        npx wrangler secret put NAVER_CLIENT_ID
 #        npx wrangler secret put NAVER_CLIENT_SECRET
+#        npx wrangler secret put PRODUCT_HUNT_TOKEN
+#          └ https://www.producthunt.com/v2/oauth/applications 에서 "Developer Token" 발급

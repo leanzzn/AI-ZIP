@@ -34,6 +34,30 @@ const KEYWORDS = [
 const KEYWORDS_PER_RUN = 4;
 
 /**
+ * Product Hunt(해외 신제품 사이트)에서 가져올 분야.
+ *
+ * 위 네이버 검색어 4묶음(신규·트렌드 / 글쓰기 / 개발 / 업무 자동화)을 그대로 옮긴 것입니다.
+ * Product Hunt V2는 "검색어로 프로덕트 찾기"를 지원하지 않고 분야(topic) 단위로만 골라낼 수 있어서,
+ * 한글 검색어를 그대로 넘길 수 없어 같은 뜻의 분야 이름으로 바꿔 적었습니다.
+ */
+const PH_TOPICS = [
+  "artificial-intelligence", // 신규·트렌드
+  "writing", // 글쓰기·번역
+  "developer-tools", // 개발
+  "productivity", // 업무 자동화
+];
+
+const PH_ENDPOINT = "https://api.producthunt.com/v2/api/graphql";
+/** 한 번 돌 때 볼 분야 개수 (네이버처럼 매번 무작위로 바꿔 가며 봅니다) */
+const PH_TOPICS_PER_RUN = 2;
+/** 분야당 가져올 프로덕트 개수 */
+const PH_POSTS_PER_TOPIC = 8;
+/** 한 번에 판정까지 돌릴 해외 프로덕트 최대 개수 (호출 예산) */
+const MAX_PH_ITEMS = 4;
+/** 며칠치를 볼지. 6시간치만 보면 하루에 몇 개 안 올라와서 거의 빈손으로 돌아옵니다 */
+const PH_LOOKBACK_HOURS = 24;
+
+/**
  * 검색어 16개 중에서 매번 무작위로 몇 개만 뽑습니다.
  * 6시간마다 다른 검색어가 걸리니 하루면 대부분 한 번씩 돕니다.
  */
@@ -53,8 +77,9 @@ const JUDGE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 /**
  * 워커는 요청 1건당 바깥 호출을 50번까지만 할 수 있습니다. 최악의 경우 예산:
- * 네이버 검색 4 + 노션 조회 4 + 블로그 열기 5 + 툴 추출 5 + 주소 찾기 8 + 품질 판정 8 + 노션 저장 8 = 42
- * (노션 조회는 데이터 소스 id를 캐시해서 실제로는 더 적습니다)
+ * 네이버 검색 4 + 노션 조회 4 + 블로그 열기 5 + 툴 추출 5 + 주소 찾기 8
+ *   + Product Hunt 1 + 주소 펴기 4 + 품질 판정 12 = 43
+ * (노션 조회는 데이터 소스 id를 캐시해서 실제로는 더 적습니다. 노션 저장은 자정 배치로 빠졌습니다)
  * ponytail: 유료 플랜(1000개)으로 올리면 아래 숫자만 키우면 됨.
  */
 const MAX_POSTS = 5;
@@ -94,8 +119,12 @@ const JUDGE_PROMPT =
   `- 분야: ${CATEGORIES.join(" / ")} 중 딱 하나. 애매하면 "일상 및 생산성".\n` +
   `- 가격: ${PRICE_TYPES.join(" / ")} 중 하나. 모르면 "부분 무료".\n` +
   "- 한국어: 한국어 입출력을 제대로 지원하면 true, 아니거나 모르면 false.\n" +
+  "- 요약: 이 서비스가 뭘 해주는지 한국어 한 줄로. 25자 안팎, 마침표 없이.\n" +
+  "  기능을 나열하지 말고 '무엇을 해주는지' 하나만 써. 영어 전문 용어를 쓰지 마.\n" +
+  "\n이름과 설명이 영어로 들어와도 똑같은 기준으로 판단해. " +
+  "단, 답변에 쓰는 분야·가격·요약은 어떤 경우에도 한국어로 써 (분야와 가격은 위에 적힌 보기 그대로).\n" +
   '\n아래 JSON 하나만 출력해. 다른 말은 절대 쓰지 마.\n' +
-  '{"판정":"PASS","분야":"코딩 및 개발","가격":"부분 무료","한국어":true}';
+  '{"판정":"PASS","분야":"코딩 및 개발","가격":"부분 무료","한국어":true,"요약":"코드를 대신 써주는 편집기"}';
 
 const EXTRACT_PROMPT =
   "아래 블로그 글에서 '사용자가 직접 써볼 수 있는 AI 서비스'만 뽑아줘.\n" +
@@ -183,6 +212,99 @@ async function searchNaver(query: string, env: Env): Promise<Post[]> {
 
   const { items = [] } = (await res.json()) as { items?: { title: string; link: string }[] };
   return items.map((i) => ({ title: stripHtml(i.title), url: i.link }));
+}
+
+/** Product Hunt 프로덕트 한 건 */
+type PhNode = { name?: string; tagline?: string; description?: string; website?: string; url?: string };
+
+/**
+ * 분야 여러 개를 한 번의 요청으로 물어봅니다 (별칭 t0, t1...).
+ * 분야마다 따로 부르면 바깥 호출 횟수만 늘어나는데, GraphQL은 한 번에 몰아서 물어볼 수 있습니다.
+ * 분야 이름은 위 PH_TOPICS 상수에서만 오기 때문에 문자열을 그대로 끼워 넣어도 안전합니다.
+ */
+export function phQuery(topics: string[]): string {
+  const 물어볼것 = "{ nodes { name tagline description website url } }";
+  const 묶음 = topics
+    .map(
+      (t, i) =>
+        `  t${i}: posts(topic: "${t}", postedAfter: $postedAfter, order: VOTES, first: ${PH_POSTS_PER_TOPIC}) ${물어볼것}`,
+    )
+    .join("\n");
+  return `query($postedAfter: DateTime!) {\n${묶음}\n}`;
+}
+
+/** GraphQL 응답에서 프로덕트 목록만 꺼냅니다. 분야끼리 겹치는 프로덕트는 한 번만 */
+export function phNodes(body: unknown): PhNode[] {
+  const { data, errors } = (body ?? {}) as {
+    data?: Record<string, { nodes?: PhNode[] } | null>;
+    errors?: { message?: string }[];
+  };
+
+  // GraphQL은 잘못된 요청에도 200을 주고 errors에 이유를 담아 보냅니다
+  if (errors?.length) throw new Error(`Product Hunt 응답 오류 — ${errors.map((e) => e.message).join(", ")}`);
+
+  const nodes = Object.values(data ?? {}).flatMap((t) => t?.nodes ?? []);
+  const 이름있는것 = nodes.filter((n): n is PhNode & { name: string } => typeof n.name === "string" && n.name.trim() !== "");
+  return [...new Map(이름있는것.map((n) => [n.name.trim().toLowerCase(), n])).values()];
+}
+
+/**
+ * Product Hunt가 주는 website는 클릭 추적용 중간 주소(producthunt.com/r/...)라
+ * 한 번 따라가서 진짜 홈페이지 주소만 남깁니다.
+ * 못 펴면 빈 값 — 주소를 못 찾은 국내 툴과 똑같이 이름으로 중복을 거릅니다.
+ */
+const IS_PH = /(^|\.)producthunt\.com$/i;
+
+async function unwrapWebsite(website: string): Promise<string> {
+  try {
+    if (!IS_PH.test(new URL(website).hostname)) return siteRoot(website);
+    const res = await fetch(website, { method: "HEAD", redirect: "manual" });
+    const target = res.headers.get("location") ?? "";
+    return IS_PH.test(new URL(target).hostname) ? "" : siteRoot(target);
+  } catch {
+    return ""; // 주소가 비었거나 형식이 깨진 경우
+  }
+}
+
+/**
+ * Product Hunt에서 최근 올라온 프로덕트를 가져옵니다.
+ * 블로그와 달리 이름·설명·홈페이지를 처음부터 다 주기 때문에
+ * 본문 열기 → AI 추출 → 주소 찾기 단계를 통째로 건너뛰고 바로 판정 대상이 됩니다.
+ */
+export async function fetchProductHunt(env: Env): Promise<CollectedItem[]> {
+  if (!env.PRODUCT_HUNT_TOKEN) {
+    console.log("PRODUCT_HUNT_TOKEN이 없어 해외 수집은 건너뜁니다");
+    return [];
+  }
+
+  const topics = pickKeywords(PH_TOPICS_PER_RUN, PH_TOPICS);
+  const postedAfter = new Date(Date.now() - PH_LOOKBACK_HOURS * 3600_000).toISOString();
+  console.log("이번 해외 분야", topics.join(", "));
+
+  const res = await fetch(PH_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.PRODUCT_HUNT_TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ query: phQuery(topics), variables: { postedAfter } }),
+  });
+  if (!res.ok) throw new Error(`Product Hunt 실패 — ${res.status} ${await res.text()}`);
+
+  const nodes = phNodes(await res.json()).slice(0, MAX_PH_ITEMS);
+
+  return Promise.all(
+    nodes.map(async (n) => ({
+      title: (n.name ?? "").trim().slice(0, 100),
+      url: normalizeUrl(await unwrapWebsite(n.website ?? "")),
+      // tagline이 딱 한 줄짜리 소개라 그대로 설명으로 씁니다
+      description: (n.tagline ?? "").trim(),
+      source: n.url ?? PH_ENDPOINT,
+      // 긴 상세 설명은 판정 근거로만 씁니다 (저장하지 않습니다)
+      detail: (n.description ?? "").trim(),
+    })),
+  );
 }
 
 /** 블로그 글을 열어서 본문 글자와 글 안의 바깥 링크를 뽑습니다 */
@@ -278,6 +400,8 @@ export type Verdict = {
   category: (typeof CATEGORIES)[number];
   priceType: (typeof PRICE_TYPES)[number];
   isKorean: boolean;
+  /** AI가 새로 쓴 한국어 한 줄 요약. 못 받았으면 빈 문자열 */
+  summary: string;
 };
 
 /**
@@ -301,7 +425,13 @@ export async function evaluateToolQuality(ai: Ai, text: string): Promise<Verdict
 
 /** AI 답변 문자열 → Verdict. JSON이 깨졌으면 통째로 REJECT 처리합니다 */
 export function parseVerdict(raw: string): Verdict {
-  const fallback: Verdict = { pass: false, category: "일상 및 생산성", priceType: "부분 무료", isKorean: false };
+  const fallback: Verdict = {
+    pass: false,
+    category: "일상 및 생산성",
+    priceType: "부분 무료",
+    isKorean: false,
+    summary: "",
+  };
 
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return fallback;
@@ -327,7 +457,17 @@ export function parseVerdict(raw: string): Verdict {
       ? (가격 as Verdict["priceType"])
       : fallback.priceType,
     isKorean: parsed["한국어"] === true,
+    // 카드에 한 줄로 들어갈 자리라 길면 잘라냅니다. 한글이 한 자도 없으면 안 쓴 걸로 봅니다
+    summary: 한글요약(String(parsed["요약"] ?? "")),
   };
+}
+
+/** 카드 요약으로 쓸 수 있는 한국어 한 줄인지 보고, 아니면 빈 문자열 */
+const HANGUL = /[가-힣]/;
+
+function 한글요약(s: string): string {
+  const 다듬음 = s.trim().replace(/[.。]$/, "");
+  return HANGUL.test(다듬음) ? 다듬음.slice(0, 40) : "";
 }
 
 /** 네이버 검색 → 블로그 본문 → AI 툴 추출 → 중복 제거 → 품질 판정 */
@@ -339,7 +479,15 @@ export async function collect(env: Env) {
   const queries = pickKeywords();
   console.log("이번 검색어", queries.join(", "));
 
-  const searched = await Promise.all(queries.map((q) => searchNaver(q, env)));
+  // 네이버 블로그 검색(국내)과 Product Hunt(해외)는 서로 상관없는 일이라 같이 출발시킵니다.
+  // 해외 쪽이 실패해도 국내 수집은 끝까지 돌아야 해서 실패는 여기서 삼키고 빈손으로 넘어갑니다.
+  const [searched, phItems] = await Promise.all([
+    Promise.all(queries.map((q) => searchNaver(q, env))),
+    fetchProductHunt(env).catch((e): CollectedItem[] => {
+      console.error("Product Hunt 수집 실패", e);
+      return [];
+    }),
+  ]);
   const found = [...new Map(searched.flat().map((p) => [p.url, p])).values()];
 
   // 제목만 봐도 AI 얘기가 아닌 글은 아예 열지 않습니다 (호출 예산 아끼기)
@@ -389,11 +537,12 @@ export async function collect(env: Env) {
     }),
   );
 
+  // 여기서 국내(블로그)와 해외(Product Hunt) 수집물이 한 줄기로 합쳐집니다.
   // 서로 다른 이름이 같은 사이트로 이어지면 한 건만.
   // 주소를 못 찾은 건 이름을 열쇠로 씁니다 (주소는 비워두고 저장합니다)
   const tools = [
     ...new Map(
-      withUrl.map((t): [string, CollectedItem] => [t.url || `이름:${t.title.toLowerCase()}`, t]),
+      [...withUrl, ...phItems].map((t): [string, CollectedItem] => [t.url || `이름:${t.title.toLowerCase()}`, t]),
     ).values(),
   ];
 
@@ -414,7 +563,8 @@ export async function collect(env: Env) {
 
   const verdicts = await Promise.all(
     candidates.map((t) =>
-      evaluateToolQuality(env.AI, `${t.title}\n${t.description}`).catch((e) => {
+      // 해외 프로덕트는 상세 설명까지 붙여서 판단 근거를 늘려줍니다 (없으면 기존과 똑같습니다)
+      evaluateToolQuality(env.AI, [t.title, t.description, t.detail].filter(Boolean).join("\n")).catch((e) => {
         console.error("품질 판정 실패", t.url, e);
         // 판정 실패한 건 저장하지 않습니다
         return { pass: false } as Verdict;
@@ -426,13 +576,24 @@ export async function collect(env: Env) {
   const passed: CollectedItem[] = [];
   for (const [idx, t] of candidates.entries()) {
     const v = verdicts[idx];
-    if (v.pass) passed.push({ ...t, category: v.category, priceType: v.priceType, isKorean: v.isKorean });
+    if (!v.pass) continue;
+    passed.push({
+      ...t,
+      // 설명이 영어면(주로 해외 프로덕트) AI가 새로 쓴 한국어 요약으로 갈아끼웁니다.
+      // 이미 한국어면 블로그에서 뽑은 설명이 더 구체적이라 그대로 둡니다.
+      description: HANGUL.test(t.description) ? t.description : v.summary || t.description,
+      detail: undefined, // 판정에만 쓰는 원문이라 저장 단계로 넘기지 않습니다
+      category: v.category,
+      priceType: v.priceType,
+      isKorean: v.isKorean,
+    });
   }
 
   const noUrl = passed.filter((t) => t.url === "").length;
   console.log(
-    `검색 ${found.length} → AI 글 ${posts.length} → 새 글 ${fresh.length} → 이름 ${named.length} → 새 툴 ${candidates.length} → PASS ${passed.length} (주소 빈 것 ${noUrl})`,
+    `검색 ${found.length} → AI 글 ${posts.length} → 새 글 ${fresh.length} → 이름 ${named.length} ` +
+      `(+ 해외 ${phItems.length}) → 새 툴 ${candidates.length} → PASS ${passed.length} (주소 빈 것 ${noUrl})`,
   );
 
-  return { blogs: found.length, newBlogs: fresh.length, tools: candidates.length, passed, noUrl };
+  return { blogs: found.length, newBlogs: fresh.length, ph: phItems.length, tools: candidates.length, passed, noUrl };
 }

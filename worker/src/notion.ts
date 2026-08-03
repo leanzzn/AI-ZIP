@@ -6,6 +6,8 @@ export type Env = {
   NOTION_DATABASE_ID: string;
   NAVER_CLIENT_ID: string;
   NAVER_CLIENT_SECRET: string;
+  /** Product Hunt V2 개발자 토큰. 없으면 해외 수집만 건너뜁니다 (국내 수집은 그대로 돕니다) */
+  PRODUCT_HUNT_TOKEN: string;
   /** Cloudflare Workers AI 바인딩 (wrangler.toml의 [ai]) */
   AI: Ai;
   /** 임시 보관함 D1 바인딩 (wrangler.toml의 [[d1_databases]]) */
@@ -20,8 +22,10 @@ export type CollectedItem = {
   url: string;
   /** AI 툴 한 줄 설명 */
   description: string;
-  /** 이 툴 정보를 뽑아온 블로그 글 주소 */
+  /** 이 툴 정보를 뽑아온 블로그 글 주소 (Product Hunt에서 온 건 그쪽 소개 페이지 주소) */
   source: string;
+  /** 품질 판정에만 쓰는 긴 원문 설명. 저장하지 않습니다 */
+  detail?: string;
   /** ISO 문자열. 없으면 현재 시각 */
   createdAt?: string;
   /** AI가 매긴 분야. 웹사이트 카테고리 칩과 같은 글자여야 합니다 */
