@@ -380,8 +380,8 @@ for (const s of curated) s.overview = overviews[s.id];
 
 /** 노션을 매 접속마다 부르면 느려서 1시간 동안은 갖고 있던 걸 씁니다 */
 const CACHE_MS = 60 * 60 * 1000;
-/** 워커가 재시작돼도 남는 캐시의 이름표. 진짜 주소가 아니라 열쇠로만 씁니다 */
-const CACHE_KEY = "https://ai-zip.internal/notion-services";
+/** 워커가 재시작돼도 남는 캐시(KV)의 이름표 */
+const CACHE_KEY = "notion-services";
 const NOTION_VERSION = "2025-09-03";
 
 let cache: { at: number; services: Service[] } | undefined;
@@ -435,23 +435,25 @@ function toService(page: { id: string; properties: Record<string, NotionProp> })
 }
 
 /**
- * 노션에서 읽어온 목록을 클라우드플레어 캐시에 맡겨둡니다.
+ * 노션에서 읽어온 목록을 KV(클라우드플레어 저장소)에 1시간 보관합니다.
  *
  * 아래 `cache` 변수만 쓰던 때는 워커가 잠깐 쉬었다 깨어나면 캐시가 통째로 사라져서,
  * 그때 들어온 손님이 노션을 처음부터 다시 부르는 동안 10초를 기다렸습니다
  * (툴 1,300개면 노션에 14번, 3,500개면 35번 물어봐야 합니다).
- * 이 캐시는 워커가 재시작해도 남아서 그런 손님이 없어집니다. 따로 만들 것도, 돈 드는 것도 없습니다.
+ *
+ * Cloudflare 기본 캐시(Cache API)를 먼저 써봤는데 workers.dev 주소에서는 통째로 무시됩니다.
+ * KV는 주소와 상관없이 동작합니다. 저장은 1시간에 한 번뿐이라 무료 한도 안에서 넉넉합니다.
  *
  * ponytail: 캐시가 만료되는 순간에 손님이 여럿 몰리면 그만큼 노션을 동시에 부릅니다.
  *           실제로 문제가 되면 그때 자물쇠를 걸면 됩니다 (지금 트래픽에선 과합니다).
  */
 async function fetchFromNotionCached(): Promise<Service[]> {
-  const store = typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : undefined;
-  if (!store) return fetchFromNotion(); // 로컬 개발 등 캐시가 없는 곳
+  const kv = await getKv();
+  if (!kv) return fetchFromNotion(); // 로컬 개발 등 KV가 없는 곳
 
   try {
-    const hit = await store.match(CACHE_KEY);
-    if (hit) return (await hit.json()) as Service[];
+    const hit = await kv.get(CACHE_KEY, "json");
+    if (Array.isArray(hit) && hit.length > 0) return hit as Service[];
   } catch {
     // 캐시가 깨져 있으면 그냥 새로 불러옵니다
   }
@@ -460,20 +462,27 @@ async function fetchFromNotionCached(): Promise<Service[]> {
   // 노션이 실패해서 빈 배열이 온 걸 저장해두면 한 시간 동안 사이트가 24개로 굳습니다
   if (services.length > 0) {
     try {
-      await store.put(
-        CACHE_KEY,
-        new Response(JSON.stringify(services), {
-          headers: {
-            "content-type": "application/json",
-            "cache-control": `max-age=${CACHE_MS / 1000}`,
-          },
-        }),
-      );
+      await kv.put(CACHE_KEY, JSON.stringify(services), { expirationTtl: CACHE_MS / 1000 });
     } catch {
       // 저장에 실패해도 화면은 그대로 나갑니다
     }
   }
   return services;
+}
+
+type Kv = {
+  get(key: string, type: "json"): Promise<unknown>;
+  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
+};
+
+/** wrangler.jsonc 의 NOTION_CACHE 바인딩. 로컬(next dev)에서는 없어서 undefined 입니다 */
+async function getKv(): Promise<Kv | undefined> {
+  try {
+    const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+    return (getCloudflareContext().env as unknown as { NOTION_CACHE?: Kv }).NOTION_CACHE;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 노션에 쌓인 툴 전부. 실패하면 빈 배열 — 노션이 죽어도 사이트는 24개로 계속 돕니다 */
