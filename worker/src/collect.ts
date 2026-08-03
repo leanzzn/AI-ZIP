@@ -52,6 +52,8 @@ const PH_ENDPOINT = "https://api.producthunt.com/v2/api/graphql";
 const PH_TOPICS_PER_RUN = 2;
 /** 분야당 가져올 프로덕트 개수 */
 const PH_POSTS_PER_TOPIC = 8;
+/** 분야를 안 가리고 표를 많이 받은 순으로도 가져옵니다 (신생 인기 툴이 여기 많이 뜹니다) */
+const PH_RANKING_COUNT = 10;
 /** 한 번에 판정까지 돌릴 해외 프로덕트 최대 개수 (호출 예산) */
 const MAX_PH_ITEMS = 4;
 /** 며칠치를 볼지. 6시간치만 보면 하루에 몇 개 안 올라와서 거의 빈손으로 돌아옵니다 */
@@ -136,9 +138,12 @@ const EXTRACT_PROMPT =
   "- 해당하는 게 없으면 [] 만 출력해.\n" +
   "JSON 배열만 출력해. 다른 설명은 절대 쓰지 마.";
 
-/** 툴 사이트가 아닌 곳 (블로그 플랫폼, SNS, 언론, 쇼핑몰, 위키, 정적 파일 서버 등) */
+/**
+ * 툴 사이트가 아닌 곳 (블로그 플랫폼, SNS, 언론, 쇼핑몰, 위키, 정적 파일 서버 등)
+ * producthunt.com·steemhunt.com은 툴 소개 사이트라, 툴 이름으로 검색하면 공식 홈페이지인 척 잡힙니다.
+ */
 const NOT_A_TOOL =
-  /(^|\.)(naver\.com|naver\.net|pstatic\.net|blog\.me|tistory\.com|daum\.net|kakao\.com|google\.com|gstatic\.com|facebook\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|linkedin\.com|pinterest\.com|threads\.net|coupang\.com|11st\.co\.kr|gmarket\.co\.kr|yes24\.com|kyobobook\.co\.kr|aladin\.co\.kr|netflix\.com|wikipedia\.org|namu\.wiki|w3\.org|schema\.org|go\.kr|or\.kr)$/i;
+  /(^|\.)(naver\.com|naver\.net|pstatic\.net|blog\.me|tistory\.com|daum\.net|kakao\.com|google\.com|gstatic\.com|facebook\.com|instagram\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|linkedin\.com|pinterest\.com|threads\.net|producthunt\.com|steemhunt\.com|webcatalog\.io|coupang\.com|11st\.co\.kr|gmarket\.co\.kr|yes24\.com|kyobobook\.co\.kr|aladin\.co\.kr|netflix\.com|wikipedia\.org|namu\.wiki|w3\.org|schema\.org|go\.kr|or\.kr)$/i;
 
 /** 이미지·CSS 같은 파일 주소는 링크 목록에서 뺍니다 */
 const ASSET_FILE = /\.(css|js|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|xml|json)(\?|$)/i;
@@ -215,25 +220,38 @@ async function searchNaver(query: string, env: Env): Promise<Post[]> {
 }
 
 /** Product Hunt 프로덕트 한 건 */
-type PhNode = { name?: string; tagline?: string; description?: string; website?: string; url?: string };
+type PhNode = {
+  name?: string;
+  tagline?: string;
+  description?: string;
+  website?: string;
+  url?: string;
+  votesCount?: number;
+};
 
 /**
- * 분야 여러 개를 한 번의 요청으로 물어봅니다 (별칭 t0, t1...).
- * 분야마다 따로 부르면 바깥 호출 횟수만 늘어나는데, GraphQL은 한 번에 몰아서 물어볼 수 있습니다.
- * 분야 이름은 위 PH_TOPICS 상수에서만 오기 때문에 문자열을 그대로 끼워 넣어도 안전합니다.
+ * 한 번의 요청으로 두 가지를 같이 물어봅니다 (GraphQL은 별칭으로 몰아서 물어볼 수 있습니다).
+ * - t0, t1...  : 정해둔 분야 안에서 (위 PH_TOPICS)
+ * - rank       : 분야를 안 가리고 표를 많이 받은 순으로 (일간 인기 순위)
+ *
+ * 순위 쪽은 아직 분야가 안 붙은 신생 툴까지 잡아냅니다. 분야만 보면 이런 게 통째로 빠집니다.
+ * 분야 이름은 PH_TOPICS 상수에서만 오기 때문에 문자열을 그대로 끼워 넣어도 안전합니다.
  */
 export function phQuery(topics: string[]): string {
-  const 물어볼것 = "{ nodes { name tagline description website url } }";
-  const 묶음 = topics
-    .map(
-      (t, i) =>
-        `  t${i}: posts(topic: "${t}", postedAfter: $postedAfter, order: VOTES, first: ${PH_POSTS_PER_TOPIC}) ${물어볼것}`,
-    )
-    .join("\n");
-  return `query($postedAfter: DateTime!) {\n${묶음}\n}`;
+  const 물어볼것 = "{ nodes { name tagline description website url votesCount } }";
+  const 분야별 = topics.map(
+    (t, i) =>
+      `  t${i}: posts(topic: "${t}", postedAfter: $postedAfter, order: VOTES, first: ${PH_POSTS_PER_TOPIC}) ${물어볼것}`,
+  );
+  const 순위 = `  rank: posts(postedAfter: $postedAfter, order: VOTES, first: ${PH_RANKING_COUNT}) ${물어볼것}`;
+  return `query($postedAfter: DateTime!) {\n${[...분야별, 순위].join("\n")}\n}`;
 }
 
-/** GraphQL 응답에서 프로덕트 목록만 꺼냅니다. 분야끼리 겹치는 프로덕트는 한 번만 */
+/**
+ * GraphQL 응답에서 프로덕트 목록만 꺼냅니다.
+ * 분야와 순위에 같은 프로덕트가 겹쳐 나오므로 이름으로 한 번만 남기고, 표를 많이 받은 순으로 세웁니다.
+ * (뒤에서 앞에서부터 몇 개만 잘라 쓰기 때문에 이 순서가 곧 우선순위입니다)
+ */
 export function phNodes(body: unknown): PhNode[] {
   const { data, errors } = (body ?? {}) as {
     data?: Record<string, { nodes?: PhNode[] } | null>;
@@ -245,21 +263,37 @@ export function phNodes(body: unknown): PhNode[] {
 
   const nodes = Object.values(data ?? {}).flatMap((t) => t?.nodes ?? []);
   const 이름있는것 = nodes.filter((n): n is PhNode & { name: string } => typeof n.name === "string" && n.name.trim() !== "");
-  return [...new Map(이름있는것.map((n) => [n.name.trim().toLowerCase(), n])).values()];
+  return [...new Map(이름있는것.map((n) => [n.name.trim().toLowerCase(), n])).values()].sort(
+    (a, b) => (b.votesCount ?? 0) - (a.votesCount ?? 0),
+  );
 }
 
 /**
  * Product Hunt가 주는 website는 클릭 추적용 중간 주소(producthunt.com/r/...)라
  * 한 번 따라가서 진짜 홈페이지 주소만 남깁니다.
- * 못 펴면 빈 값 — 주소를 못 찾은 국내 툴과 똑같이 이름으로 중복을 거릅니다.
+ *
+ * 이 주소는 부를 때마다 뒤 토큰이 새로 발급됩니다. 그래서 못 펴면 반드시 빈 값이어야 합니다 —
+ * 그대로 저장하면 같은 툴이 매번 다른 주소로 보여서 중복 방지가 통째로 뚫립니다.
+ * 한 번만 시도하고 안 되면 빈 값으로 두고 넘어갑니다. 주소가 비어도 저장은 그대로 되고,
+ * 국내 툴과 똑같이 이름으로 중복을 거른 뒤 주소는 노션에서 채우시면 됩니다.
  */
 const IS_PH = /(^|\.)producthunt\.com$/i;
 
 async function unwrapWebsite(website: string): Promise<string> {
   try {
     if (!IS_PH.test(new URL(website).hostname)) return siteRoot(website);
-    const res = await fetch(website, { method: "HEAD", redirect: "manual" });
+
+    // 브라우저인 척해야 통과됩니다. 리다이렉트를 따라가지 않고 Location 헤더만 읽습니다.
+    const res = await fetch(website, {
+      method: "GET",
+      redirect: "manual",
+      headers: { "User-Agent": BROWSER_UA },
+    });
     const target = res.headers.get("location") ?? "";
+    if (!target) {
+      console.log("PH 주소 못 폄", res.status, website.slice(0, 60));
+      return "";
+    }
     return IS_PH.test(new URL(target).hostname) ? "" : siteRoot(target);
   } catch {
     return ""; // 주소가 비었거나 형식이 깨진 경우
@@ -418,9 +452,24 @@ export async function evaluateToolQuality(ai: Ai, text: string): Promise<Verdict
     temperature: 0, // 같은 툴이면 같은 판정이 나오게
   })) as { response?: string };
 
-  const raw = out.response ?? "";
+  const raw = asText(out.response);
   console.log("판정", JSON.stringify(raw.slice(0, 120)), "←", JSON.stringify(text.slice(0, 80)));
   return parseVerdict(raw);
+}
+
+/**
+ * Workers AI가 답을 문자열이 아니라 객체로 돌려줄 때가 있습니다.
+ * 그대로 두면 판정이 통째로 에러가 나서 아무것도 저장되지 않으므로 글자로 맞춰줍니다.
+ * (객체로 와도 안에 판정 JSON이 그대로 들어있어서 아래 parseVerdict가 꺼내 씁니다)
+ */
+export function asText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v == null) return "";
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 /** AI 답변 문자열 → Verdict. JSON이 깨졌으면 통째로 REJECT 처리합니다 */

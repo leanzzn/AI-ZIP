@@ -13,7 +13,7 @@ import {
   toReadableUrl,
 } from "./collect.ts";
 
-const fakeAi = (answer: string) => ({ run: async () => ({ response: answer }) }) as unknown as Ai;
+const fakeAi = (answer: unknown) => ({ run: async () => ({ response: answer }) }) as unknown as Ai;
 
 test("네이버 응답의 태그와 특수문자를 걷어낸다", () => {
   assert.equal(stripHtml(" <b>AI</b> 툴 &amp; 서비스&#39;s "), "AI 툴 & 서비스's");
@@ -68,26 +68,54 @@ test("PASS만 통과시키고 분류까지 받아온다", async () => {
   assert.equal((await evaluateToolQuality(fakeAi(""), "x")).pass, false);
 });
 
-test("분야 여러 개를 한 번의 요청으로 묶어서 물어본다", () => {
+test("AI가 글자가 아닌 걸 돌려줘도 판정이 죽지 않는다", async () => {
+  // 실제로 이것 때문에 판정이 통째로 실패해서 보관함에 아무것도 안 쌓이고 있었습니다
+  const 객체로옴 = await evaluateToolQuality(
+    fakeAi({ 판정: "PASS", 분야: "코딩 및 개발", 가격: "무료", 한국어: true, 요약: "코드를 써주는 도구" }),
+    "x",
+  );
+  assert.deepEqual(객체로옴, {
+    pass: true,
+    category: "코딩 및 개발",
+    priceType: "무료",
+    isKorean: true,
+    summary: "코드를 써주는 도구",
+  });
+
+  // 아예 못 알아볼 값이 와도 에러 대신 REJECT로 떨어져야 합니다
+  assert.equal((await evaluateToolQuality(fakeAi(12345), "x")).pass, false);
+  assert.equal((await evaluateToolQuality(fakeAi(null), "x")).pass, false);
+});
+
+test("분야와 인기 순위를 한 번의 요청으로 묶어서 물어본다", () => {
   const q = phQuery(["artificial-intelligence", "developer-tools"]);
   // 분야마다 별칭이 따로 붙어야 응답에서 갈라 받을 수 있습니다
   assert.match(q, /t0: posts\(topic: "artificial-intelligence"/);
   assert.match(q, /t1: posts\(topic: "developer-tools"/);
+  // 인기 순위는 분야를 안 걸고 표 순으로 (신생 툴이 여기 뜹니다)
+  assert.match(q, /rank: posts\(postedAfter: \$postedAfter, order: VOTES/);
+  assert.doesNotMatch(q, /rank: posts\([^)]*topic:/);
   // 요구된 수집 항목이 다 들어있는지
   for (const f of ["name", "tagline", "description", "website"]) assert.match(q, new RegExp(`\\b${f}\\b`));
 });
 
-test("Product Hunt 응답에서 프로덕트만 꺼내고 겹치는 건 한 번만 센다", () => {
+test("겹치는 프로덕트는 한 번만 세고 표 많은 순으로 세운다", () => {
   const 응답 = {
     data: {
-      t0: { nodes: [{ name: "Cursor", tagline: "AI code editor" }, { name: "빈칸없음" }] },
-      // 분야가 달라도 같은 프로덕트가 또 올라옵니다
-      t1: { nodes: [{ name: "cursor", tagline: "중복" }, { name: "  " }] },
+      t0: { nodes: [{ name: "Cursor", tagline: "AI code editor", votesCount: 30 }, { name: "표없음" }] },
+      // 분야와 순위에 같은 프로덕트가 겹쳐 나옵니다 (양쪽에서 같은 내용이 옵니다)
+      rank: {
+        nodes: [
+          { name: "Cursor", tagline: "AI code editor", votesCount: 30 },
+          { name: "인기툴", votesCount: 500 },
+          { name: "  " },
+        ],
+      },
     },
   };
   assert.deepEqual(
     phNodes(응답).map((n) => n.name),
-    ["cursor", "빈칸없음"],
+    ["인기툴", "Cursor", "표없음"],
   );
 
   // 200으로 와도 errors가 있으면 빈손이 아니라 실패로 처리해야 다음 실행에서 눈치챌 수 있습니다
