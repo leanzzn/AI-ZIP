@@ -73,7 +73,7 @@ type PageProps = Record<
 /** 조회할 때마다 DB를 다시 물어보면 호출만 낭비라 한 번 찾은 id는 들고 있습니다 */
 let cachedDataSourceId: string | undefined;
 
-async function getDataSourceId(notion: Client, databaseId: string): Promise<string> {
+export async function getDataSourceId(notion: Client, databaseId: string): Promise<string> {
   if (cachedDataSourceId) return cachedDataSourceId;
 
   // 노션 v5부터는 DB가 아니라 "데이터 소스"에 질의합니다. DB에서 그 id를 먼저 꺼냅니다.

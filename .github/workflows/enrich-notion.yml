@@ -1,0 +1,77 @@
+# 노션에 새로 들어온 툴을 매일 자정에 한 번 정리합니다.
+#
+# 하는 일: 최근 25시간 안에 노션에서 바뀐 줄만 보고, 그중
+#   · 주소가 비어 있으면 → 검색해서 채우고
+#   · 한 줄 설명이 부실하거나 외국어가 섞였으면 → 한국어로 다시 쓰고
+#   · 긴 소개글에 외국어가 섞였으면 → 한국어로 다시 씁니다.
+#
+# 전체(1,300건)를 훑지 않습니다. 어제 이후 바뀐 것만 봅니다.
+# 25시간으로 잡은 이유: 24시간으로 딱 맞추면 실행이 몇 분만 늦어져도 그 사이 것이 새어 나갑니다.
+# 한 시간 겹치게 두면 빠뜨리지 않습니다 (이미 고친 건 다시 안 고치니 겹쳐도 손해가 없습니다).
+
+name: 노션 데이터 매일 정리
+
+on:
+  schedule:
+    # GitHub 크론은 UTC 기준입니다. 15:00 UTC = 한국시간 자정.
+    - cron: "0 15 * * *"
+  # 깃허브 화면에서 버튼으로 직접 돌릴 수도 있습니다 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+    inputs:
+      최근시간:
+        description: "몇 시간 안에 바뀐 것을 볼지 (전체를 보려면 0)"
+        default: "25"
+      미리보기:
+        description: "true 로 두면 노션을 고치지 않고 뭐가 바뀔지만 봅니다"
+        type: boolean
+        default: false
+
+# 앞 실행이 아직 안 끝났으면 겹쳐 돌리지 않습니다 (같은 줄을 두 번 고치는 걸 막습니다)
+concurrency:
+  group: enrich-notion
+  cancel-in-progress: false
+
+jobs:
+  정리:
+    runs-on: ubuntu-latest
+    # 무료 사용 시간을 지키기 위한 안전장치. 보통 2~3분이면 끝납니다.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 타입을 그대로 실행하는 기능(--experimental-strip-types)이 24부터 기본입니다
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      # 노션을 건드리기 전에 판별 규칙부터 확인합니다. 여기서 깨지면 아무것도 고치지 않고 멈춥니다.
+      - name: 판별 규칙 자체 점검
+        run: node --experimental-strip-types scripts/agent/enricher.ts --self-check
+
+      - name: 손볼 것이 몇 건인지 먼저 세어보기
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          node --experimental-strip-types scripts/agent/enricher.ts \
+            --조사 --최근=${{ inputs.최근시간 || '25' }}
+
+      - name: 고치기
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          node --experimental-strip-types scripts/agent/enricher.ts \
+            --최근=${{ inputs.최근시간 || '25' }} \
+            --limit=30 \
+            ${{ inputs.미리보기 == true && '--dry-run' || '' }}
+
+      # 사이트는 노션 내용을 1시간 들고 있습니다. 자정에 고치면 늦어도 새벽 1시에는 저절로 반영됩니다.
+      # 그래서 캐시를 강제로 비우지 않습니다 (그러려면 클라우드플레어 토큰이 하나 더 필요합니다).

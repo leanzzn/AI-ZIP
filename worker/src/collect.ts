@@ -676,7 +676,7 @@ export function siteRoot(url: string): string {
  * AI에게 주소를 물어보면 Gemini를 암호화폐 거래소(gemini.com)로 답하는 식의 실수가 나서,
  * 검색 결과에서 직접 가져옵니다.
  */
-async function resolveOfficialUrl(name: string, env: Env): Promise<string> {
+export async function resolveOfficialUrl(name: string, env: Env): Promise<string> {
   const query = encodeURIComponent(`${name} 공식 사이트`);
   const res = await fetch(`https://openapi.naver.com/v1/search/webkr.json?display=5&query=${query}`, {
     headers: {
@@ -698,7 +698,18 @@ async function resolveOfficialUrl(name: string, env: Env): Promise<string> {
   const words = name.toLowerCase().match(/[a-z]{3,}/g) ?? [];
   const score = (root: string) => words.filter((w) => new URL(root).hostname.includes(w)).length;
 
-  return roots.sort((a, b) => score(b) - score(a))[0] ?? "";
+  const 최선 = roots.sort((a, b) => score(b) - score(a))[0];
+
+  /**
+   * 이름이 도메인에 하나도 안 들어가면 못 찾은 걸로 봅니다 (빈 문자열).
+   *
+   * 예전엔 점수가 0이어도 검색 1등을 그냥 돌려줬는데, 그러다 Snapdown 에 leawo.org(DVD 변환 프로그램),
+   * 탁몽에 경기북부 e스포츠진흥원 주소가 들어갔습니다. 엉뚱한 주소는 빈 칸보다 나쁩니다 —
+   * 빈 칸은 눈에 띄어서 채우게 되지만, 그럴듯한 오답은 손님이 클릭할 때까지 아무도 모릅니다.
+   *
+   * 이름이 한글뿐이면(words 가 비면) 도메인으로 확인할 방법이 없으니 항상 빈 칸입니다. 그게 안전합니다.
+   */
+  return 최선 && score(최선) > 0 ? 최선 : "";
 }
 
 /** 판정 결과. pass가 false면 나머지 값은 의미 없습니다 */

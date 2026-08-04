@@ -93,7 +93,12 @@ npm run dev      # 개발 서버 (http://localhost:3000)
 npm run build    # 빌드 확인
 npm run lint     # 코드 검사
 npm run deploy   # 빌드 + Cloudflare 배포 (실서비스에 바로 반영됨)
+
+npm run enrich:notion -- --dry-run   # 노션에서 주소 비었거나 설명 부실한 것 찾아 고치기 (미리보기)
+npm run enrich:notion                # 진짜로 고치기
 ```
+
+**노션 데이터를 손대는 코드를 쓰기 전에 `scripts/agent/주의사항.md` 를 먼저 읽는다.**
 
 **`npm run deploy`는 실제 사이트를 바꿉니다. 사장님이 "배포해줘"라고 말하기 전엔 실행하지 않는다.**
 

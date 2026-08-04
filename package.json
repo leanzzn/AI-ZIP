@@ -16,7 +16,8 @@
     "worker:db:remote": "wrangler d1 execute ai-zip-staging --remote --file=worker/schema.sql",
     "seed:sql": "node --experimental-strip-types scripts/seed-to-d1.ts",
     "enrich": "node --experimental-strip-types scripts/enrich-all.ts",
-    "push:notion": "node --experimental-strip-types --env-file=.env.local scripts/push-to-notion.ts"
+    "push:notion": "node --experimental-strip-types --env-file=.env.local scripts/push-to-notion.ts",
+    "enrich:notion": "node --experimental-strip-types --env-file-if-exists=worker/.dev.vars --env-file-if-exists=.env.local scripts/agent/enricher.ts"
   },
   "dependencies": {
     "@notionhq/client": "^5.23.3",
